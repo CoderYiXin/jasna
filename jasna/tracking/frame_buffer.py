@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import torch
+import torch.nn.functional as F
 
 from jasna.tracking.clip_tracker import TrackedClip
 
@@ -63,13 +64,18 @@ class FrameBuffer:
 
             crop_h = y2 - y1
             crop_w = x2 - x1
-            restored_resized = restored[:, :crop_h, :crop_w]
 
             mask_crop = mask[y1:y2, x1:x2]
             actual_h, actual_w = mask_crop.shape
             if actual_h < crop_h or actual_w < crop_w:
                 crop_h, crop_w = actual_h, actual_w
-                restored_resized = restored_resized[:, :crop_h, :crop_w]
+
+            restored_resized = F.interpolate(
+                restored.unsqueeze(0).float(),
+                size=(crop_h, crop_w),
+                mode='bilinear',
+                align_corners=False
+            ).squeeze(0).to(restored.dtype)
 
             blended = pending.blended_frame
             blended[:, y1:y1 + crop_h, x1:x1 + crop_w] = torch.where(

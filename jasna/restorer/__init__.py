@@ -1,9 +1,8 @@
-from jasna.restorer.frame_restorer import FrameRestorer, RedTintRestorer
+from jasna.restorer.basicvsrpp_mosaic_restorer import BasicvsrppMosaicRestorer
 from jasna.restorer.restoration_pipeline import RestorationPipeline
 
 __all__ = [
-    "FrameRestorer",
-    "RedTintRestorer",
+    "BasicvsrppMosaicRestorer",
     "RestorationPipeline",
 ]
 

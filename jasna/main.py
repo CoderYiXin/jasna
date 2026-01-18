@@ -7,20 +7,34 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input", required=True, type=str, help="Path to input video")
     parser.add_argument("--output", required=True, type=str, help="Path to output video")
     parser.add_argument(
-        "--restorer-model",
+        "--detection-model",
         type=str,
         default="rfdetr",
         choices=["rfdetr"],
-        help='Restorer model name (only "rfdetr" supported for now)',
+        help='Detection model name (only "rfdetr" supported for now)',
     )
     parser.add_argument(
-        "--restorer-model-path",
+        "--detection-model-path",
         type=str,
         default=str(Path("model_weights") / "rfdetr.onnx"),
-        help='Path to ONNX model (default: "model_weights/rfdetr.onnx")',
+        help='Path to detection ONNX model (default: "model_weights/rfdetr.onnx")',
+    )
+    parser.add_argument(
+        "--restoration-model-name",
+        type=str,
+        default="basicvsrpp",
+        choices=["basicvsrpp"],
+        help='Restoration model name (only "basicvsrpp" supported for now)',
+    )
+    parser.add_argument(
+        "--restoration-model-path",
+        type=str,
+        default=str(Path("model_weights") / "lada_mosaic_restoration_model_generic_v1.2.pth"),
+        help='Path to restoration model (default: "model_weights/lada_mosaic_restoration_model_generic_v1.2.pth")',
     )
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--device", type=str, default="cuda:0")
+    parser.add_argument("--fp16", action="store_true", help="Use FP16 for restoration model")
     parser.add_argument("--max-clip-size", type=int, default=30, help="Maximum clip size for tracking")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable debug logging")
     return parser
@@ -39,17 +53,23 @@ def main() -> None:
 
     from jasna.mosaic import RfDetrMosaicDetectionModel
     from jasna.pipeline import Pipeline
-    from jasna.restorer import RedTintRestorer, RestorationPipeline
+    from jasna.restorer import BasicvsrppMosaicRestorer, RestorationPipeline
 
     input_video = Path(args.input)
     if not input_video.exists():
         raise FileNotFoundError(str(input_video))
 
     output_video = Path(args.output)
-    restorer_model = str(args.restorer_model)
-    restorer_model_path = Path(args.restorer_model_path)
-    if not restorer_model_path.exists():
-        raise FileNotFoundError(str(restorer_model_path))
+
+    detection_model_name = str(args.detection_model)
+    detection_model_path = Path(args.detection_model_path)
+    if not detection_model_path.exists():
+        raise FileNotFoundError(str(detection_model_path))
+
+    restoration_model_name = str(args.restoration_model_name)
+    restoration_model_path = Path(args.restoration_model_path)
+    if not restoration_model_path.exists():
+        raise FileNotFoundError(str(restoration_model_path))
 
     batch_size = int(args.batch_size)
     if batch_size <= 0:
@@ -60,18 +80,28 @@ def main() -> None:
         raise ValueError("--max-clip-size must be > 0")
 
     device = torch.device(str(args.device))
+    fp16 = bool(args.fp16)
 
-    if restorer_model != "rfdetr":
-        raise ValueError(f"Unsupported restorer model: {restorer_model}")
+    if detection_model_name != "rfdetr":
+        raise ValueError(f"Unsupported detection model: {detection_model_name}")
+
+    if restoration_model_name != "basicvsrpp":
+        raise ValueError(f"Unsupported restoration model: {restoration_model_name}")
 
     stream = torch.cuda.Stream()
     detection_model = RfDetrMosaicDetectionModel(
-        onnx_path=restorer_model_path,
+        onnx_path=detection_model_path,
         stream=stream,
         batch_size=batch_size,
         device=device,
     )
-    restoration_pipeline = RestorationPipeline(restorers=[RedTintRestorer(alpha=0.3)])
+
+    restorer = BasicvsrppMosaicRestorer(
+        checkpoint_path=str(restoration_model_path),
+        device=device,
+        fp16=fp16,
+    )
+    restoration_pipeline = RestorationPipeline(restorer=restorer)
 
     Pipeline(
         input_video=input_video,
