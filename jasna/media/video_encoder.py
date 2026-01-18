@@ -160,7 +160,7 @@ def remux_with_audio_and_metadata(video_input: Path, output_path: Path, metadata
         raise RuntimeError(f"ffmpeg failed with code {result.returncode}: {' '.join(cmd)}\n{result.stderr.decode()}")
 
 
-class NvidiaVideoEncoder2:
+class NvidiaVideoEncoder:
     def __init__(self, file: str, device: torch.device, stream: torch.cuda.Stream, metadata: VideoMetadata, stream_mode: bool = False):
         self.metadata = metadata
         self.stream = stream
