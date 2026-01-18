@@ -66,6 +66,7 @@ def main() -> None:
         output_video=output_video,
         detection_model=detection_model,
         restoration_pipeline=restoration_pipeline,
+        stream=stream,
         batch_size=batch_size,
         device=device,
     ).run()
