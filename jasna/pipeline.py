@@ -80,7 +80,7 @@ class Pipeline:
                         pts = int(pts_list[i])
                         frame = frames_eff[i]
 
-                        keep_k = np.isfinite(detections.scores[i].numpy())
+                        keep_k = np.isfinite(detections.scores[i])
                         valid_boxes = detections.boxes_xyxy[i][keep_k]
                         valid_masks = detections.masks[i][keep_k]
                         n_detections = valid_boxes.shape[0]

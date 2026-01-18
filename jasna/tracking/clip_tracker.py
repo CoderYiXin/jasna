@@ -25,9 +25,9 @@ class TrackedClip:
         return list(range(self.start_frame, self.start_frame + len(self.bboxes)))
 
 
-def compute_iou_matrix(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.Tensor:
+def compute_iou_matrix(boxes1: np.ndarray, boxes2: np.ndarray) -> np.ndarray:
     """
-    Compute IoU matrix between two sets of boxes (xyxy format). No CPU sync.
+    Compute IoU matrix between two sets of boxes (xyxy format) on CPU.
     boxes1: (N, 4)
     boxes2: (M, 4)
     Returns: (N, M) IoU matrix
@@ -35,35 +35,35 @@ def compute_iou_matrix(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.Tens
     n = boxes1.shape[0]
     m = boxes2.shape[0]
     if n == 0 or m == 0:
-        return torch.zeros((n, m), device=boxes1.device)
+        return np.zeros((n, m), dtype=np.float32)
 
-    b1 = boxes1.unsqueeze(1)  # (N, 1, 4)
-    b2 = boxes2.unsqueeze(0)  # (1, M, 4)
+    b1 = boxes1[:, np.newaxis, :]  # (N, 1, 4)
+    b2 = boxes2[np.newaxis, :, :]  # (1, M, 4)
 
-    inter_x1 = torch.maximum(b1[..., 0], b2[..., 0])
-    inter_y1 = torch.maximum(b1[..., 1], b2[..., 1])
-    inter_x2 = torch.minimum(b1[..., 2], b2[..., 2])
-    inter_y2 = torch.minimum(b1[..., 3], b2[..., 3])
+    inter_x1 = np.maximum(b1[..., 0], b2[..., 0])
+    inter_y1 = np.maximum(b1[..., 1], b2[..., 1])
+    inter_x2 = np.minimum(b1[..., 2], b2[..., 2])
+    inter_y2 = np.minimum(b1[..., 3], b2[..., 3])
 
-    inter_w = (inter_x2 - inter_x1).clamp(min=0)
-    inter_h = (inter_y2 - inter_y1).clamp(min=0)
+    inter_w = np.maximum(inter_x2 - inter_x1, 0)
+    inter_h = np.maximum(inter_y2 - inter_y1, 0)
     inter_area = inter_w * inter_h
 
     area1 = (boxes1[:, 2] - boxes1[:, 0]) * (boxes1[:, 3] - boxes1[:, 1])
     area2 = (boxes2[:, 2] - boxes2[:, 0]) * (boxes2[:, 3] - boxes2[:, 1])
 
-    union_area = area1.unsqueeze(1) + area2.unsqueeze(0) - inter_area
-    return inter_area / union_area.clamp(min=1e-6)
+    union_area = area1[:, np.newaxis] + area2[np.newaxis, :] - inter_area
+    return inter_area / np.maximum(union_area, 1e-6)
 
 
 def merge_overlapping_boxes(
-    bboxes: torch.Tensor, masks: torch.Tensor, iou_threshold: float
-) -> tuple[torch.Tensor, torch.Tensor]:
+    bboxes: np.ndarray, masks: torch.Tensor, iou_threshold: float
+) -> tuple[np.ndarray, torch.Tensor]:
     """
-    Merge overlapping bboxes within a single frame using GPU ops.
-    bboxes: (K, 4) xyxy
-    masks: (K, H, W) bool
-    Returns merged (N, 4) bboxes and (N, H, W) masks where N <= K
+    Merge overlapping bboxes within a single frame.
+    bboxes: (K, 4) xyxy on CPU
+    masks: (K, H, W) bool on GPU
+    Returns merged (N, 4) bboxes (CPU) and (N, H, W) masks (GPU) where N <= K
     """
     n = bboxes.shape[0]
     if n <= 1:
@@ -72,30 +72,30 @@ def merge_overlapping_boxes(
     iou_matrix = compute_iou_matrix(bboxes, bboxes)
     adjacency = iou_matrix > iou_threshold
 
-    labels = torch.arange(n, device=bboxes.device)
+    labels = np.arange(n)
     for _ in range(n):
         for i in range(n):
-            neighbors = adjacency[i].nonzero(as_tuple=True)[0]
-            if neighbors.numel() > 0:
+            neighbors = np.where(adjacency[i])[0]
+            if len(neighbors) > 0:
                 min_label = labels[neighbors].min()
                 if min_label < labels[i]:
                     labels[i] = min_label
 
-    unique_labels = labels.unique()
+    unique_labels = np.unique(labels)
     merged_bboxes = []
     merged_masks = []
 
     for label in unique_labels:
-        group_mask = labels == label
-        group_boxes = bboxes[group_mask]
+        group_indices = np.where(labels == label)[0]
+        group_boxes = bboxes[group_indices]
         x1 = group_boxes[:, 0].min()
         y1 = group_boxes[:, 1].min()
         x2 = group_boxes[:, 2].max()
         y2 = group_boxes[:, 3].max()
-        merged_bboxes.append(torch.stack([x1, y1, x2, y2]))
-        merged_masks.append(masks[group_mask].any(dim=0))
+        merged_bboxes.append(np.array([x1, y1, x2, y2]))
+        merged_masks.append(masks[group_indices].any(dim=0))
 
-    return torch.stack(merged_bboxes), torch.stack(merged_masks)
+    return np.stack(merged_bboxes), torch.stack(merged_masks)
 
 
 class ClipTracker:
@@ -104,23 +104,22 @@ class ClipTracker:
         self.iou_threshold = iou_threshold
         self.active_clips: dict[int, TrackedClip] = {}
         self.next_track_id = 0
-        self.last_frame_boxes: torch.Tensor | None = None  # (T, 4) stacked boxes
+        self.last_frame_boxes: np.ndarray | None = None  # (T, 4) stacked boxes, CPU
         self.track_ids: list[int] = []  # track_id for each row in last_frame_boxes
 
     def update(
-        self, frame_idx: int, bboxes_cpu: torch.Tensor, masks: torch.Tensor
+        self, frame_idx: int, bboxes: np.ndarray, masks: torch.Tensor
     ) -> tuple[list[TrackedClip], set[int]]:
         """
         Update tracker with detections from a new frame.
         
-        bboxes_cpu: (K, 4) xyxy format, on CPU
+        bboxes: (K, 4) xyxy format, on CPU (numpy)
         masks: (K, H, W) bool, on GPU
         
         Returns:
             ended_clips: clips that ended this frame (max size or no match)
             active_track_ids: track ids that cover this frame
         """
-        bboxes = bboxes_cpu.to(masks.device) if bboxes_cpu.shape[0] > 0 else bboxes_cpu
         if bboxes.shape[0] > 0:
             bboxes, masks = merge_overlapping_boxes(bboxes, masks, self.iou_threshold)
 
@@ -135,7 +134,7 @@ class ClipTracker:
             return ended_clips, active_track_ids
 
         n_detections = bboxes.shape[0]
-        matched_det = torch.zeros(n_detections, dtype=torch.bool, device=bboxes.device)
+        matched_det = np.zeros(n_detections, dtype=bool)
         matched_track_indices: set[int] = set()
         det_to_track: dict[int, int] = {}
 
@@ -143,28 +142,24 @@ class ClipTracker:
             iou_matrix = compute_iou_matrix(bboxes, self.last_frame_boxes)  # (K, T)
 
             for _ in range(min(n_detections, len(self.track_ids))):
-                valid_mask = ~matched_det.unsqueeze(1).expand_as(iou_matrix)
-                for ti in matched_track_indices:
-                    valid_mask[:, ti] = False
-                masked_iou = torch.where(valid_mask, iou_matrix, torch.zeros_like(iou_matrix))
+                valid_mask = ~matched_det[:, np.newaxis] & ~np.array([i in matched_track_indices for i in range(len(self.track_ids))])
+                masked_iou = np.where(valid_mask, iou_matrix, 0.0)
 
                 max_iou = masked_iou.max()
                 if max_iou <= self.iou_threshold:
                     break
 
                 flat_idx = masked_iou.argmax()
-                det_idx = (flat_idx // iou_matrix.shape[1]).item()
-                track_idx = (flat_idx % iou_matrix.shape[1]).item()
+                det_idx = flat_idx // iou_matrix.shape[1]
+                track_idx = flat_idx % iou_matrix.shape[1]
 
                 matched_det[det_idx] = True
                 matched_track_indices.add(track_idx)
                 det_to_track[det_idx] = track_idx
-
-        bboxes_np = bboxes.cpu().numpy()
         for det_idx, track_idx in det_to_track.items():
             track_id = self.track_ids[track_idx]
             clip = self.active_clips[track_id]
-            clip.bboxes.append(bboxes_np[det_idx])
+            clip.bboxes.append(bboxes[det_idx])
             clip.masks.append(masks[det_idx])
             active_track_ids.add(track_id)
 
@@ -183,7 +178,7 @@ class ClipTracker:
                 clip = TrackedClip(
                     track_id=track_id,
                     start_frame=frame_idx,
-                    bboxes=[bboxes_np[det_idx]],
+                    bboxes=[bboxes[det_idx]],
                     masks=[masks[det_idx]],
                 )
                 self.active_clips[track_id] = clip
@@ -194,11 +189,11 @@ class ClipTracker:
         for track_id in active_track_ids:
             clip = self.active_clips.get(track_id)
             if clip:
-                new_boxes.append(bboxes.new_tensor(clip.bboxes[-1]))
+                new_boxes.append(clip.bboxes[-1])
                 new_track_ids.append(track_id)
 
         if new_boxes:
-            self.last_frame_boxes = torch.stack(new_boxes)
+            self.last_frame_boxes = np.stack(new_boxes)
             self.track_ids = new_track_ids
         else:
             self.last_frame_boxes = None

@@ -102,7 +102,7 @@ class RfDetrMosaicDetectionModel:
             score_threshold=self.score_threshold,
             max_select=self.max_select,
         )
-        cpu_data = torch.cat([scores.unsqueeze(-1), boxes], dim=-1).cpu()
+        cpu_data = torch.cat([scores.unsqueeze(-1), boxes], dim=-1).float().cpu().numpy()
         return Detections(
             scores=cpu_data[..., 0],
             boxes_xyxy=cpu_data[..., 1:],
