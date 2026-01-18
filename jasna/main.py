@@ -24,13 +24,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    args = build_parser().parse_args()
+
     import torch
 
     from jasna.mosaic import RfDetrMosaicDetectionModel
     from jasna.pipeline import Pipeline
     from jasna.restorer import FramesRestorer, RestorationPipeline
-
-    args = build_parser().parse_args()
 
     input_video = Path(args.input)
     if not input_video.exists():

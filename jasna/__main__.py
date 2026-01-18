@@ -1,4 +1,4 @@
-from .main import main
+from jasna.main import main
 
 main()
 

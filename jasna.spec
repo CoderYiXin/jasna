@@ -2,12 +2,29 @@
 
 block_cipher = None
 
+from PyInstaller.utils.hooks import collect_all
+
+def _collect(name: str):
+    d, b, h = [], [], []
+    try:
+        d, b, h = collect_all(name)
+    except Exception:
+        pass
+    return d, b, h
+
+datas, binaries, hiddenimports = [], [], []
+for pkg in ["torch", "av", "PyNvVideoCodec", "python_vali", "tensorrt", "tensorrt_libs"]:
+    d, b, h = _collect(pkg)
+    datas += d
+    binaries += b
+    hiddenimports += h
+
 a = Analysis(
     ["jasna/__main__.py"],
     pathex=["."],
-    binaries=[],
-    datas=[],
-    hiddenimports=[],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -20,9 +37,6 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
     name="jasna",
     debug=False,
@@ -37,5 +51,17 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    exclude_binaries=True,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name="jasna",
 )
 
