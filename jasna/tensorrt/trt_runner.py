@@ -10,6 +10,9 @@ class TrtRunner:
         input_shape: tuple[int, int, int, int], 
         device: torch.device) -> None:
         self.engine_path = engine_path
+        self.stream = stream
+        self.input_shape = input_shape
+        self.device = device
 
         self.logger = trt.Logger(trt.ILogger.Severity(trt.Logger.ERROR))
         self.runtime = trt.Runtime(self.logger)
